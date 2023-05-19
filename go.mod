@@ -1,4 +1,4 @@
-module parallel
+module github.com/devian2011/parallel
 
 go 1.19
 
