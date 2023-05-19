@@ -11,17 +11,19 @@ func TestAwait(t *testing.T) {
 	const (
 		ContextStringResult = "ctx string result"
 	)
-	promise := Await(context.Background(), func() AwaitTaskResult {
-		return &AwaitTaskResultImpl{
+	promise := Await(context.Background(), func() TaskResult {
+		return &TaskResultImpl{
 			value: ContextStringResult,
 			err:   nil,
 		}
 	})
 
-	ctxTimeout, _ := context.WithTimeout(context.Background(), 1*time.Millisecond)
-	promiseTm := Await(ctxTimeout, func() AwaitTaskResult {
+	ctxTimeout, st := context.WithTimeout(context.Background(), 1*time.Millisecond)
+	defer st()
+
+	promiseTm := Await(ctxTimeout, func() TaskResult {
 		time.Sleep(1 * time.Second)
-		return &AwaitTaskResultImpl{
+		return &TaskResultImpl{
 			value: nil,
 			err:   nil,
 		}
