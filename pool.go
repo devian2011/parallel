@@ -1,9 +1,14 @@
 package parallel
 
 import (
+	"context"
 	"errors"
 	"math/rand"
 	"sync"
+)
+
+var (
+	ErrPoolIsStopped = errors.New("pool working is stopped")
 )
 
 type inTaskWrapper[IN any] struct {
@@ -29,17 +34,22 @@ func (t *taskResultWrapper) GetError() error {
 }
 
 type Pool[IN any] struct {
+	stopped bool
+
 	input  chan inTaskWrapper[IN]
 	output chan TaskResult
 
+	ctx context.Context
 	mtx *sync.RWMutex
 	wg  *sync.WaitGroup
 
 	outChMap map[int64]chan TaskResult
 }
 
-func NewPool[IN any](threadCnt int, fn func(IN) (any, error)) *Pool[IN] {
+func NewPool[IN any](ctx context.Context, threadCnt int, fn func(IN) (any, error)) *Pool[IN] {
 	pool := &Pool[IN]{
+		ctx:      ctx,
+		stopped:  false,
 		mtx:      &sync.RWMutex{},
 		input:    make(chan inTaskWrapper[IN], threadCnt),
 		output:   make(chan TaskResult, threadCnt),
@@ -62,6 +72,11 @@ func NewPool[IN any](threadCnt int, fn func(IN) (any, error)) *Pool[IN] {
 	return pool
 }
 
+func (p *Pool[IN]) safeShutdown() {
+	<-p.ctx.Done()
+	p.Stop()
+}
+
 func (p *Pool[IN]) resultRouter() {
 	for o := range p.output {
 		wrapper := o.(*taskResultWrapper)
@@ -72,6 +87,13 @@ func (p *Pool[IN]) resultRouter() {
 }
 
 func (p *Pool[IN]) Execute(data IN) TaskResult {
+	if p.stopped {
+		return &TaskResultImpl{
+			value: nil,
+			err:   ErrPoolIsStopped,
+		}
+	}
+
 	unique := rand.Int63()
 	if _, exists := p.outChMap[unique]; exists {
 		return &TaskResultImpl{
@@ -89,14 +111,22 @@ func (p *Pool[IN]) Execute(data IN) TaskResult {
 		input: data,
 	}
 
-	result := <-p.outChMap[unique]
-	close(p.outChMap[unique])
-	delete(p.outChMap, unique)
+	select {
+	case result := <-p.outChMap[unique]:
+		close(p.outChMap[unique])
+		delete(p.outChMap, unique)
 
-	return result
+		return result
+	case <-p.ctx.Done():
+		return &TaskResultImpl{
+			value: nil,
+			err:   ErrPoolIsStopped,
+		}
+	}
 }
 
 func (p *Pool[IN]) Stop() {
+	p.stopped = true
 	close(p.input)
 	p.wg.Wait()
 }
