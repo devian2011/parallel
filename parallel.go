@@ -22,7 +22,6 @@ func HandleParallelChan[IN any](threadCnt int, input chan IN, fn func(IN) TaskRe
 
 func HandleParallelOut[IN any](threadCnt int, input chan IN, fn func(IN) TaskResult, handler func(result TaskResult)) *sync.WaitGroup {
 	outCh, wg := HandleParallelChan(threadCnt, input, fn)
-	defer close(outCh)
 	go func() {
 		for o := range outCh {
 			handler(o)

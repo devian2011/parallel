@@ -36,8 +36,7 @@ func (t *taskResultWrapper) GetError() error {
 type Pool[IN any] struct {
 	stopped bool
 
-	input  chan inTaskWrapper[IN]
-	output chan TaskResult
+	input chan inTaskWrapper[IN]
 
 	ctx context.Context
 	mtx *sync.RWMutex
@@ -52,22 +51,29 @@ func NewPool[IN any](ctx context.Context, threadCnt int, fn func(IN) (any, error
 		stopped:  false,
 		mtx:      &sync.RWMutex{},
 		input:    make(chan inTaskWrapper[IN], threadCnt),
-		output:   make(chan TaskResult, threadCnt),
 		outChMap: make(map[int64]chan TaskResult),
 	}
 
-	pool.output, pool.wg = HandleParallelChan[inTaskWrapper[IN]](threadCnt, pool.input, func(input inTaskWrapper[IN]) TaskResult {
-		out, err := fn(input.input)
-		return &taskResultWrapper{
-			result: &TaskResultImpl{
-				value: out,
-				err:   err,
-			},
-			id: input.id,
-		}
-	})
-
-	go pool.resultRouter()
+	pool.wg = HandleParallelOut[inTaskWrapper[IN]](
+		threadCnt,
+		pool.input,
+		func(input inTaskWrapper[IN]) TaskResult {
+			out, err := fn(input.input)
+			return &taskResultWrapper{
+				result: &TaskResultImpl{
+					value: out,
+					err:   err,
+				},
+				id: input.id,
+			}
+		},
+		func(result TaskResult) {
+			wrapper := result.(*taskResultWrapper)
+			if ch, exists := pool.outChMap[wrapper.id]; exists {
+				ch <- result
+			}
+		},
+	)
 
 	return pool
 }
@@ -75,15 +81,6 @@ func NewPool[IN any](ctx context.Context, threadCnt int, fn func(IN) (any, error
 func (p *Pool[IN]) safeShutdown() {
 	<-p.ctx.Done()
 	p.Stop()
-}
-
-func (p *Pool[IN]) resultRouter() {
-	for o := range p.output {
-		wrapper := o.(*taskResultWrapper)
-		if ch, exists := p.outChMap[wrapper.id]; exists {
-			ch <- o
-		}
-	}
 }
 
 func (p *Pool[IN]) Execute(data IN) TaskResult {

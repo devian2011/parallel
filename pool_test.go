@@ -1,6 +1,7 @@
 package parallel
 
 import (
+	"context"
 	"errors"
 	"runtime"
 	"testing"
@@ -10,7 +11,7 @@ import (
 
 func TestPool_Execute(t *testing.T) {
 	errMessage := errors.New("errmessage")
-	pool := NewPool[string](runtime.NumCPU(), func(in string) (any, error) {
+	pool := NewPool[string](context.Background(), runtime.NumCPU(), func(in string) (any, error) {
 		if in == "err" {
 			return nil, errMessage
 		}
