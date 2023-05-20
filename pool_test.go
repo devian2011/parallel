@@ -2,9 +2,10 @@ package parallel
 
 import (
 	"errors"
-	"github.com/stretchr/testify/assert"
 	"runtime"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestPool_Execute(t *testing.T) {
