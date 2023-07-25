@@ -11,7 +11,7 @@ import (
 
 func TestPool_Execute(t *testing.T) {
 	errMessage := errors.New("errmessage")
-	pool := NewPool[string](context.Background(), runtime.NumCPU(), func(in string) (any, error) {
+	pool := NewPool[string, string](context.Background(), runtime.NumCPU(), func(in string) (any, error) {
 		if in == "err" {
 			return nil, errMessage
 		}
@@ -22,8 +22,8 @@ func TestPool_Execute(t *testing.T) {
 	twoResult := pool.Execute("two")
 	errResult := pool.Execute("err")
 
-	assert.Equal(t, "one", oneResult.GetValue().(string))
-	assert.Equal(t, "two", twoResult.GetValue().(string))
+	assert.Equal(t, "one", oneResult.GetValue())
+	assert.Equal(t, "two", twoResult.GetValue())
 	assert.Equal(t, errMessage, errResult.GetError())
 
 	pool.Stop()

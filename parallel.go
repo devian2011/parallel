@@ -5,10 +5,11 @@ import (
 	"sync"
 )
 
-func HandleParallelChan[IN any](threadCnt int, input chan IN, fn func(IN) TaskResult) (chan TaskResult, *sync.WaitGroup) {
+// HandleParallelChan process data from chan, and return output chan with wg
+func HandleParallelChan[IN any, OUT any](threadCnt int, input chan IN, fn func(IN) TaskResult[OUT]) (chan TaskResult[OUT], *sync.WaitGroup) {
 	wg := &sync.WaitGroup{}
 	wg.Add(threadCnt)
-	outputCh := make(chan TaskResult, threadCnt)
+	outputCh := make(chan TaskResult[OUT], threadCnt)
 	for c := 0; c < threadCnt; c++ {
 		go func() {
 			for i := range input {
@@ -20,7 +21,8 @@ func HandleParallelChan[IN any](threadCnt int, input chan IN, fn func(IN) TaskRe
 	return outputCh, wg
 }
 
-func HandleParallelOut[IN any](threadCnt int, input chan IN, fn func(IN) TaskResult, handler func(result TaskResult)) *sync.WaitGroup {
+// HandleParallelOut process data from input chan in many goroutines and send result to handler, return wait group
+func HandleParallelOut[IN any, OUT any](threadCnt int, input chan IN, fn func(IN) TaskResult[OUT], handler func(result TaskResult[OUT])) *sync.WaitGroup {
 	outCh, wg := HandleParallelChan(threadCnt, input, fn)
 	go func() {
 		for o := range outCh {
@@ -31,7 +33,8 @@ func HandleParallelOut[IN any](threadCnt int, input chan IN, fn func(IN) TaskRes
 	return wg
 }
 
-func HandleParallelArr[IN any](ctx context.Context, threadCnt int, input []IN, fn func(IN) TaskResult) []TaskResult {
+// HandleParallelArr parallel processing of array
+func HandleParallelArr[IN any, OUT any](ctx context.Context, threadCnt int, input []IN, fn func(IN) TaskResult[OUT]) []TaskResult[OUT] {
 	inputCh := make(chan IN, len(input))
 	go func() {
 		<-ctx.Done()
@@ -46,7 +49,7 @@ func HandleParallelArr[IN any](ctx context.Context, threadCnt int, input []IN, f
 
 	out, wg := HandleParallelChan(threadCnt, inputCh, fn)
 
-	result := make([]TaskResult, len(input))
+	result := make([]TaskResult[OUT], len(input))
 	go func() {
 		for o := range out {
 			result = append(result, o)
