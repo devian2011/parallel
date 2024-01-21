@@ -1,26 +1,26 @@
 package parallel
 
-type TaskResult interface {
-	GetValue() any
+type TaskResult[T any] interface {
+	GetValue() T
 	HasError() bool
 	GetError() error
 }
 
-type TaskResultImpl struct {
-	value any
+type TaskResultImpl[T any] struct {
+	value T
 	err   error
 }
 
-func (a *TaskResultImpl) GetValue() any {
+func (a *TaskResultImpl[T]) GetValue() T {
 	return a.value
 }
 
-func (a *TaskResultImpl) HasError() bool {
+func (a *TaskResultImpl[T]) HasError() bool {
 	return a.err == nil
 }
 
-func (a *TaskResultImpl) GetError() error {
+func (a *TaskResultImpl[T]) GetError() error {
 	return a.err
 }
 
-type Task func() TaskResult
+type Task[T any] func() TaskResult[T]
