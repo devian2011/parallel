@@ -86,7 +86,7 @@ func NewPool[IN any, OUT any](ctx context.Context, threadCnt int, fn func(IN) (a
 	return pool
 }
 
-func (p *Pool[IN, OUT]) safeShutdown() {
+func (p *Pool[IN, OUT]) SafeShutdown() {
 	<-p.ctx.Done()
 	p.Stop()
 }
