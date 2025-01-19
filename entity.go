@@ -16,7 +16,7 @@ func (a *TaskResultImpl[T]) GetValue() T {
 }
 
 func (a *TaskResultImpl[T]) HasError() bool {
-	return a.err == nil
+	return a.err != nil
 }
 
 func (a *TaskResultImpl[T]) GetError() error {
