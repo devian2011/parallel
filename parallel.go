@@ -24,10 +24,12 @@ func HandleParallelChan[IN any, OUT any](threadCnt int, input chan IN, fn func(I
 // HandleParallelOut process data from input chan in many goroutines and send result to handler, return wait group
 func HandleParallelOut[IN any, OUT any](threadCnt int, input chan IN, fn func(IN) TaskResult[OUT], handler func(result TaskResult[OUT])) *sync.WaitGroup {
 	outCh, wg := HandleParallelChan(threadCnt, input, fn)
+	wg.Add(1)
 	go func() {
 		for o := range outCh {
 			handler(o)
 		}
+		wg.Done()
 	}()
 
 	return wg
