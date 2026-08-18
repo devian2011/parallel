@@ -2,8 +2,25 @@ package parallel
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"log/slog"
 	"sync"
 )
+
+func recoverWrapper[IN any, OUT any](
+	ctx context.Context,
+	in IN,
+	fn func(context.Context, IN) TaskResult[OUT],
+) (result TaskResult[OUT]) {
+	defer func() {
+		if err := recover(); err != nil {
+			result.Value = *new(OUT)
+			result.Err = errors.Join(ErrFnPanic, errors.New(err.(string)))
+		}
+	}()
+	return fn(ctx, in)
+}
 
 // HandleParallelChan reads from input channel, processes each item with fn
 // using up to threadCnt concurrent goroutines, and returns a buffered output
@@ -12,10 +29,18 @@ import (
 // for all workers to finish. The output channel is closed after all workers
 // have finished, so callers can range over it.
 func HandleParallelChan[IN any, OUT any](
+	ctx context.Context,
 	threadCnt int,
 	input <-chan IN,
-	fn func(IN) TaskResult[OUT],
-) <-chan TaskResult[OUT] {
+	fn func(context.Context, IN) TaskResult[OUT],
+) (<-chan TaskResult[OUT], error) {
+	if input == nil {
+		return nil, fmt.Errorf("empty input")
+	}
+	if threadCnt <= 0 {
+		return nil, fmt.Errorf("threadCnt must be greater than 0")
+	}
+
 	wg := &sync.WaitGroup{}
 	wg.Add(threadCnt)
 	outputCh := make(chan TaskResult[OUT], threadCnt)
@@ -23,8 +48,21 @@ func HandleParallelChan[IN any, OUT any](
 	for c := 0; c < threadCnt; c++ {
 		go func() {
 			defer wg.Done()
-			for item := range input {
-				outputCh <- fn(item)
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case in, ok := <-input:
+					if !ok {
+						return
+					}
+
+					select {
+					case <-ctx.Done():
+						return
+					case outputCh <- recoverWrapper(ctx, in, fn):
+					}
+				}
 			}
 		}()
 	}
@@ -36,7 +74,7 @@ func HandleParallelChan[IN any, OUT any](
 		close(outputCh)
 	}()
 
-	return outputCh
+	return outputCh, nil
 }
 
 // HandleParallelOut processes items from input channel using threadCnt workers,
@@ -46,12 +84,23 @@ func HandleParallelChan[IN any, OUT any](
 // It returns a single WaitGroup that will be marked done when both the workers
 // have finished processing all items AND the handler has processed all results.
 func HandleParallelOut[IN any, OUT any](
+	ctx context.Context,
 	threadCnt int,
 	input <-chan IN,
-	fn func(IN) TaskResult[OUT],
-	handler func(result TaskResult[OUT]),
-) *sync.WaitGroup {
-	outCh := HandleParallelChan(threadCnt, input, fn)
+	fn func(context.Context, IN) TaskResult[OUT],
+	handler func(ctx context.Context, result TaskResult[OUT]),
+) (*sync.WaitGroup, error) {
+	if input == nil {
+		return nil, fmt.Errorf("empty input")
+	}
+	if threadCnt <= 0 {
+		return nil, fmt.Errorf("threadCnt must be greater than 0")
+	}
+
+	outCh, err := HandleParallelChan(ctx, threadCnt, input, fn)
+	if err != nil {
+		return nil, err
+	}
 
 	wg := &sync.WaitGroup{}
 	wg.Add(threadCnt)
@@ -59,12 +108,20 @@ func HandleParallelOut[IN any, OUT any](
 		go func() {
 			defer wg.Done()
 			for result := range outCh {
-				handler(result)
+				func() {
+					defer func() {
+						if err := recover(); err != nil {
+							slog.Error("error parallel out handler", "err", err)
+						}
+					}()
+					handler(ctx, result)
+				}()
+
 			}
 		}()
 	}
 
-	return wg
+	return wg, nil
 }
 
 // HandleParallelArr processes a slice of items concurrently, using up to
@@ -76,10 +133,13 @@ func HandleParallelArr[IN any, OUT any](
 	ctx context.Context,
 	threadCnt int,
 	input []IN,
-	fn func(IN) TaskResult[OUT],
-) []TaskResult[OUT] {
+	fn func(context.Context, IN) TaskResult[OUT],
+) ([]TaskResult[OUT], error) {
 	if len(input) == 0 {
-		return nil
+		return nil, fmt.Errorf("empty input")
+	}
+	if threadCnt <= 0 {
+		return nil, fmt.Errorf("threadCnt must be greater than 0")
 	}
 
 	type workItem struct {
@@ -103,7 +163,7 @@ func HandleParallelArr[IN any, OUT any](
 		idx    int
 		result TaskResult[OUT]
 	}
-	resCh := make(chan resultItem, threadCnt)
+	resCh := make(chan resultItem, len(input))
 
 	wg := &sync.WaitGroup{}
 	wg.Add(threadCnt)
@@ -117,7 +177,7 @@ func HandleParallelArr[IN any, OUT any](
 				default:
 					resCh <- resultItem{
 						idx:    wi.idx,
-						result: fn(wi.item),
+						result: recoverWrapper(ctx, wi.item, fn),
 					}
 				}
 			}
@@ -133,5 +193,5 @@ func HandleParallelArr[IN any, OUT any](
 	for ri := range resCh {
 		results[ri.idx] = ri.result
 	}
-	return results
+	return results, nil
 }

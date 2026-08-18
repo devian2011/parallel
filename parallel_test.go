@@ -10,19 +10,22 @@ import (
 )
 
 func TestHandleParallelChan(t *testing.T) {
+	ctx := context.Background()
 	input := make(chan int, 10)
 	for i := 0; i < 10; i++ {
 		input <- i
 	}
 	close(input)
 
-	fn := func(n int) TaskResult[string] {
+	fn := func(ctx context.Context, n int) TaskResult[string] {
 		return TaskResult[string]{Value: strconv.Itoa(n), Err: nil}
 	}
 
-	outCh := HandleParallelChan(3, input, fn)
+	outCh, err := HandleParallelChan(ctx, 3, input, fn)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
-	// Collect results
 	results := make([]string, 0, 10)
 	for result := range outCh {
 		results = append(results, result.Value)
@@ -34,6 +37,7 @@ func TestHandleParallelChan(t *testing.T) {
 }
 
 func TestHandleParallelOut(t *testing.T) {
+	ctx := context.Background()
 	input := make(chan int, 5)
 	for i := 0; i < 5; i++ {
 		input <- i
@@ -43,18 +47,20 @@ func TestHandleParallelOut(t *testing.T) {
 	collected := make([]string, 0, 5)
 	var mu sync.Mutex
 
-	fn := func(n int) TaskResult[string] {
+	fn := func(ctx context.Context, n int) TaskResult[string] {
 		return TaskResult[string]{Value: strconv.Itoa(n)}
 	}
-	handler := func(res TaskResult[string]) {
+	handler := func(ctx context.Context, res TaskResult[string]) {
 		mu.Lock()
 		collected = append(collected, res.Value)
 		mu.Unlock()
 	}
 
-	wg := HandleParallelOut(2, input, fn, handler)
+	wg, err := HandleParallelOut(ctx, 2, input, fn, handler)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
-	// Wait for both workers and handler to finish.
 	wg.Wait()
 
 	mu.Lock()
@@ -67,11 +73,14 @@ func TestHandleParallelOut(t *testing.T) {
 func TestHandleParallelArr(t *testing.T) {
 	ctx := context.Background()
 	input := []int{1, 2, 3, 4, 5}
-	fn := func(n int) TaskResult[int] {
+	fn := func(ctx context.Context, n int) TaskResult[int] {
 		return TaskResult[int]{Value: n * 10}
 	}
 
-	results := HandleParallelArr(ctx, 3, input, fn)
+	results, err := HandleParallelArr(ctx, 3, input, fn)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if len(results) != len(input) {
 		t.Errorf("expected %d results, got %d", len(input), len(results))
@@ -86,14 +95,17 @@ func TestHandleParallelArr(t *testing.T) {
 func TestHandleParallelArrWithError(t *testing.T) {
 	ctx := context.Background()
 	input := []int{1, 2, 3}
-	fn := func(n int) TaskResult[int] {
+	fn := func(ctx context.Context, n int) TaskResult[int] {
 		if n == 2 {
 			return TaskResult[int]{Err: errors.New("error on 2")}
 		}
 		return TaskResult[int]{Value: n}
 	}
 
-	results := HandleParallelArr(ctx, 2, input, fn)
+	results, err := HandleParallelArr(ctx, 2, input, fn)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if len(results) != 3 {
 		t.Fatalf("expected 3 results, got %d", len(results))
@@ -112,7 +124,7 @@ func TestHandleParallelArrWithError(t *testing.T) {
 func TestHandleParallelArrContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	input := []int{1, 2, 3, 4, 5}
-	fn := func(n int) TaskResult[int] {
+	fn := func(ctx context.Context, n int) TaskResult[int] {
 		time.Sleep(10 * time.Millisecond)
 		return TaskResult[int]{Value: n}
 	}
@@ -122,7 +134,10 @@ func TestHandleParallelArrContextCancel(t *testing.T) {
 		cancel()
 	}()
 
-	results := HandleParallelArr(ctx, 10, input, fn)
+	results, err := HandleParallelArr(ctx, 10, input, fn)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if len(results) != len(input) {
 		t.Errorf("expected len %d, got %d", len(input), len(results))
@@ -130,16 +145,29 @@ func TestHandleParallelArrContextCancel(t *testing.T) {
 	// Some results may be zero values if tasks were cancelled.
 	for _, r := range results {
 		if r.Value == 0 && r.Err == nil {
-			// possible if task was cancelled before execution
+			// possible if task was cancelled before execution – that's fine
 		}
 	}
 }
 
 func TestHandleParallelArrEmptyInput(t *testing.T) {
 	ctx := context.Background()
-	fn := func(n int) TaskResult[int] { return TaskResult[int]{Value: n} }
-	results := HandleParallelArr(ctx, 5, []int{}, fn)
+	fn := func(ctx context.Context, n int) TaskResult[int] { return TaskResult[int]{Value: n} }
+	results, err := HandleParallelArr(ctx, 5, []int{}, fn)
+	if err == nil {
+		t.Errorf("expected error for empty input, got nil")
+	}
 	if results != nil {
-		t.Errorf("expected nil for empty input, got %v", results)
+		t.Errorf("expected nil slice, got %v", results)
+	}
+}
+
+func TestHandleParallelArrInvalidThreadCnt(t *testing.T) {
+	ctx := context.Background()
+	_, err := HandleParallelArr(ctx, 0, []int{1, 2}, func(ctx context.Context, n int) TaskResult[int] {
+		return TaskResult[int]{Value: n}
+	})
+	if err == nil {
+		t.Error("expected error for threadCnt <= 0")
 	}
 }
